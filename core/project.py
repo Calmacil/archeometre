@@ -99,6 +99,20 @@ class Project:
         with open(self.fichier_meta, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
+    def sauvegarder_config(self) -> None:
+        """Exporte la configuration actuelle dans le fichier config.yaml du projet."""
+        if not hasattr(self, "config") or self.config is None:
+            return
+
+        # Ou en direct si ConfigLoader s'en charge :
+        from .config_loader import ConfigLoader
+        ConfigLoader.sauvegarder(self.config, self.fichier_config)
+
+    def sauvegarder_tout(self) -> None:
+        """Sauvegarde à la fois les métadonnées json et la config yaml."""
+        self.sauvegarder_metadonnees()
+        self.sauvegarder_config()
+
     def charger_configuration(self) -> ConfigurationSimulation:
         """Charger l'objet ConfigurationSimulation associé au projet."""
         if not self.fichier_config.exists():
