@@ -1,7 +1,9 @@
 # core/astrology.py
 
+import math
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
+# import pandas as pd
 from .enums import ElementKa
 
 SIGNE_ELEMENT_MAP = {
@@ -33,6 +35,8 @@ JOUR_ELEMENT_MAP = {
 class HorlogeAstrologique:
     """Gère le temps et les coefficients d'influence astrologique."""
 
+    DUREE_CYCLE_SYNODIQUE_SECONDES = 29.530588 * 86400 # ~2,551,442.8 secondes
+
     def __init__(
         self,
         date_debut: str,
@@ -41,6 +45,7 @@ class HorlogeAstrologique:
         facteur_zodiacal: float = 1.5,
         malus_samedi: float = 0.5,
         malus_verseau: float = 0.8,
+        reference_nouvelle_lune: str = "1890-01-10T20:00:00",
     ):
         self.date_debut = datetime.fromisoformat(date_debut)
         self.duree_pas = self._parse_duree(duree_pas_str)
@@ -48,6 +53,7 @@ class HorlogeAstrologique:
         self.facteur_zodiacal = facteur_zodiacal
         self.malus_samedi = malus_samedi
         self.malus_verseau = malus_verseau
+        self.ref_nouvelle_lune = datetime.fromisoformat(reference_nouvelle_lune)
 
     @staticmethod
     def _parse_duree(duree_str: str) -> timedelta:
@@ -61,8 +67,8 @@ class HorlogeAstrologique:
             return timedelta(days=valeur)
         raise ValueError(f"Unité de temps non reconnue : {unite} (utilisez m, h ou d)")
 
-    def Obtenir_date_pas(self, pas_de_temps: int) -> datetime:
-        return self.date_debut + (pas_de_temps * self.duree_pas)
+    def Obtenir_date_pas(self, t: int) -> datetime:
+        return self.date_debut + (t * self.duree_pas)
 
     @staticmethod
     def Obtenir_signe_zodiacal(dt: datetime) -> str:
@@ -118,3 +124,19 @@ class HorlogeAstrologique:
             mods[elem_zodiacal] *= self.facteur_zodiacal
 
         return mods
+
+    def Calculer_facteur_nouvelle_lune(self, t: int) -> float:
+        """
+        Retourne un facteur de marée lunaire variant de 1.0 (Nouvelle lune) à 0.0 (Pleine lune)
+        La variation suit une onde cosinus sure une période de 29.53 jours
+        """
+        date_courante = self.Obtenir_date_pas(t)
+        delta_secondes = (date_courante - self.ref_nouvelle_lune).total_seconds()
+
+        # Position dans le cycle synodique en radians
+        phase_rad = (2.0 * math.pi * delta_secondes) / self.DUREE_CYCLE_SYNODIQUE_SECONDES
+
+        # cos(0) = 1 -> nouvelle lune
+        # cos(pi) = -1 -> pleine lune (0.0)
+        facteur = 0.5 * (1.0 + math.cos(phase_rad))
+        return float(facteur)

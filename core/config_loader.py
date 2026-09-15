@@ -28,6 +28,7 @@ def charger_configuration(chemin_fichier: Union[str, Path]) -> ConfigurationSimu
         facteur_zodiacal_base=float(temps_data.get("facteur_zodiacal_base", 1.5)),
         malus_orichalque_samedi=float(temps_data.get("malus_orichalque_samedi", 0.5)),
         malus_orichalque_verseau=float(temps_data.get("malus_orichalque_verseau", 0.8)),
+        reference_nouvelle_lune=temps_data.get("reference_nouvelle_lune", "1890-01-10T00:20:00"),
     )
 
     # --- 1. Bloc SIMULATION ---

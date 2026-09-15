@@ -40,6 +40,7 @@ class ConfigTemps:
     facteur_zodiacal_base: float = 1.5
     malus_orichalque_samedi: float = 0.5
     malus_orichalque_verseau: float = 0.8
+    reference_nouvelle_lune: str = "1890-01-10T20:00:00"
 
 @dataclass
 class ConfigExportIndividuel:
