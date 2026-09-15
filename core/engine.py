@@ -48,7 +48,8 @@ class Engine:
         }
 
         # Application des conditions initiales à t=0
-        self._injecter_sources(t=0)
+        modificateurs_t0 = self.horloge.Calculer_modificateurs(pas_de_temps=0)
+        self._injecter_sources(t=0, modificateurs=modificateurs_t0)
         self._mettre_a_jour_vents(t=0)
 
     def simuler(self) -> None:
@@ -57,46 +58,61 @@ class Engine:
             self.calculer_pas_suivant(t)
 
     def calculer_pas_suivant(self, t: int) -> None:
-        """Calcule l'état de la grille au pas t+1 à partir de l'état au pas t."""
         t_next = t + 1
 
-        # Récupération des modificateurs astrologiques au pas t
         modificateurs = self.horloge.Calculer_modificateurs(t)
+        # Étape 1 : Récupération du facteur de Nouvelle Lune (1.0 = Nouvelle Lune, 0.0 = Pleine Lune)
+        facteur_nouvelle_lune = self.horloge.Calculer_facteur_nouvelle_lune(t)
 
-        # 1. Mise à jour des vents pour le pas courant
         self._mettre_a_jour_vents(t)
-
         vx = self.vent_x[t]
         vy = self.vent_y[t]
 
+        # Récupération du laplacien du champ de Lune s'il existe
+        laplacien_lune = None
+        if ElementKa.LUNE in self.champs:
+            champ_lune = self.champs[ElementKa.LUNE][t]
+            champ_lune_advecte = self._advecter_champ(champ_lune, vx, vy)
+            laplacien_lune = self._calculer_laplacien(champ_lune_advecte)
+
         for element in ElementKa:
             champ_actuel = self.champs[element][t]
-
-            # Facteur d'amplification / réduction temporel (défaut: 1.0)
             mod_astro = np.float32(modificateurs.get(element, 1.0))
 
             # A. ADVECTION
             champ_advecte = self._advecter_champ(champ_actuel, vx, vy)
 
-            # B. DIFFUSION (Spatiale / Laplacien modifiée par l'astrologie)
+            # B. DIFFUSION
             alpha_base = np.float32(self.config.physique.coeff_diffusion.get(element, 0.1))
-            alpha = alpha_base * mod_astro  # Multiplicateur appliqué
-
+            alpha = alpha_base * mod_astro
             laplacien = self._calculer_laplacien(champ_advecte)
-            champ_diffuse = champ_advecte + alpha * laplacien
 
-            # C. DISSIPATION / ENTROPIE
-            gamma = np.float32(self.config.physique.coeff_dissipation_champ.get(element, 0.01))
-            champ_final = champ_diffuse * (np.float32(1.0) - gamma)
+            # --- CAS SPÉCIFIQUE LUNE NOIRE ---
+            if element == ElementKa.LUNE_NOIRE:
+                # 1. Diffusion propre + 25% d'entraînement par la diffusion du champ de Lune (hors vent)
+                if laplacien_lune is not None:
+                    laplacien = laplacien + np.float32(0.25) * laplacien_lune
 
-            # Nettoyage des valeurs négatives
+                champ_diffuse = champ_advecte + alpha * laplacien
+
+                # 2. Modulations de l'entropie par la phase lunaire
+                gamma_base = np.float32(self.config.physique.coeff_dissipation_champ.get(element, 0.01))
+
+                # À la Nouvelle Lune (1.0), l'entropie baisse fortement.
+                # À la Pleine Lune (0.0), l'entropie s'applique à 100%.
+                gamma_effectif = gamma_base * (np.float32(1.0) - np.float32(0.8) * np.float32(facteur_nouvelle_lune))
+                champ_final = champ_diffuse * (np.float32(1.0) - gamma_effectif)
+
+            else:
+                # Cas standard pour les autres éléments
+                champ_diffuse = champ_advecte + alpha * laplacien
+                gamma = np.float32(self.config.physique.coeff_dissipation_champ.get(element, 0.01))
+                champ_final = champ_diffuse * (np.float32(1.0) - gamma)
+
             np.maximum(champ_final, 0.0, out=champ_final)
-
-            # Enregistrement pour t+1
             self.champs[element][t_next] = champ_final
 
-        # 2. Injection des sources actives au pas t+1 avec prise en compte de l'astrologie
-        # On passe les modificateurs calculés au pas t_next
+        # Injection des sources avec modificateurs
         modificateurs_next = self.horloge.Calculer_modificateurs(t_next)
         self._injecter_sources(t_next, modificateurs_next)
 
@@ -166,37 +182,55 @@ class Engine:
                 self.vent_x[t] += np.where(masque_portee, (dx / dist) * force, 0.0)
                 self.vent_y[t] += np.where(masque_portee, (dy / dist) * force, 0.0)
 
-    def _injecter_sources(self, t: int, modificateurs: Dict[ElementKa, float] = None) -> None:
-        """Injecte le Ka provenant des Nœuds et des Perturbations mobiles."""
-        if modificateurs is None:
-            modificateurs = self.horloge.Calculer_modificateurs(t)
+    def _injecter_sources(self, t: int, modificateurs: dict) -> None:
+        """Injecte les Nœuds et Perturbations dans les grilles au pas t."""
+        facteur_nouvelle_lune = self.horloge.Calculer_facteur_nouvelle_lune(t)
 
+        # 1. Injection des Nœuds (sources permanentes/statiques)
         for noeud in self.config.noeuds:
-            y, x = noeud.position
-            if not (0 <= y < self.H and 0 <= x < self.W):
-                continue
+            x, y = noeud.position
+            # TODO Ajouter la notion de Rayon aux Nœuds
+            rayon = getattr(noeud, "rayon", 1)
 
-            reserve_disponible = self.reserves_noeuds[noeud.id]
-            if reserve_disponible <= 0 and not noeud.permanent:
-                continue
+            # Support si signature est un objet SignatureKa ou un dictionnaire
+            signature_dict = noeud.signature.valeurs if hasattr(noeud.signature, "valeurs") else noeud.signature
 
-            for element, valeur in noeud.signature.items():
-                mod_astro = np.float32(modificateurs.get(element, 1.0))
-                # Valeur d'émanation modulée par l'astrologie
-                val_injectee = np.float32(valeur) * mod_astro
+            for element, valeur_base in signature_dict.items():
+                if element not in self.champs:
+                    continue
 
-                if not noeud.permanent:
-                    gamma_noeud = self.config.physique.coeff_amortissement_noeuds.get(element, 0.02)
-                    debit_reel = min(val_injectee, reserve_disponible)
-                    self.champs[element][t, y, x] += np.float32(debit_reel)
-                    self.reserves_noeuds[noeud.id] -= debit_reel * (1.0 + gamma_noeud)
+                mod_astro = float(modificateurs.get(element, 1.0))
+                intensite = valeur_base * mod_astro
+
+                # Modulation spécifique pour la Lune Noire selon la phase lunaire
+                if element == ElementKa.LUNE_NOIRE:
+                    intensite *= facteur_nouvelle_lune
+
+                if rayon <= 0:
+                    self.champs[element][t, y, x] += intensite
                 else:
-                    self.champs[element][t, y, x] += val_injectee
+                    y_indices, x_indices = np.ogrid[:self.H, :self.W]
+                    masque_disque = (x_indices - x)**2 + (y_indices - y)**2 <= rayon**2
+                    self.champs[element][t, masque_disque] += intensite
 
+        # 2. Injection des Perturbations (nœuds mobiles)
         for pert in self.config.perturbations:
             if t in pert.trajectoire:
                 cy, cx = pert.trajectoire[t]
-                self._appliquer_zone_injection(t, cy, cx, pert.signature, pert.rayon_effet, modificateurs)
+                rayon = getattr(pert, "rayon_effet", 0)
+
+                signature_dict = pert.signature.valeurs if hasattr(pert.signature, "valeurs") else pert.signature
+
+                # Ajustement temporaire de la signature avec modificateurs et Lune Noire
+                signature_modifiee = {}
+                for element, valeur_base in signature_dict.items():
+                    mod_astro = float(modificateurs.get(element, 1.0))
+                    valeur = valeur_base * mod_astro
+                    if element == ElementKa.LUNE_NOIRE:
+                        valeur *= facteur_nouvelle_lune
+                    signature_modifiee[element] = valeur
+
+                self._appliquer_zone_injection(t, cy, cx, signature_modifiee, rayon, modificateurs={})
 
     def _appliquer_zone_injection(
         self, t: int, cy: int, cx: int, signature: Dict[ElementKa, float], rayon: int, modificateurs: Dict[ElementKa, float]
