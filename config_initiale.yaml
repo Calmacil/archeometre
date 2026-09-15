@@ -1,0 +1,52 @@
+hauteur: 300
+largeur: 400
+pas_de_temps_total: 10
+fichier_sortie_netcdf: "simulation_initiale.nc"
+image_fond_path: "Bretagne-105.png"
+
+physique:
+  coeff_diffusion:
+    ka_feu: 0.15
+    ka_eau: 0.10
+    ka_air: 0.25
+    ka_terre: 0.05
+    ka_lune: 0.12
+    ka_lune_noire: 0.20
+  coeff_dissipation_champ:
+    ka_lune_noire: 0.15
+
+noeuds:
+  - id: "plexus_centre"
+    position: [150, 200]
+    signature:
+      ka_feu: 10.0
+      ka_air: 5.0
+    reserve_initiale: 100.0
+    permanent: true
+
+  - id: "nexus_eau"
+    position: [50, 80]
+    signature:
+      ka_eau: 15.0
+    reserve_initiale: 50.0
+    permanent: false
+
+perturbations:
+  - id: "bibliotheque_air"
+    signature:
+      ka_air: 3.0
+    rayon_effet: 5
+    trajectoire:
+      0: [120, 300]
+
+aspirations:
+  - id: "vortex_central"
+    force_aspiration: 2.5
+    rayon_attraction: 80.0
+    trajectoire:
+      0: [150, 200]
+      1: [150, 205]
+      2: [150,210]
+      3: [150,215]
+      4: [150,225]
+      5: [150,240]
